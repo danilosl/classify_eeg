@@ -1,0 +1,560 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/danilosl/classify_eeg/blob/main/Project_Final\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "vhiEN8YapLYc"
+      },
+      "source": [
+        "##**Classificação da Imagética Motora através da filtragem de sub-bandas por janelamento do espectro do sinal de EEG e implementação da Otimização Bayesiana em sistemas BCI baseados na geometria de Riemann**\n",
+        "Tratando o Dataset BCICIV_2A\n",
+        "\n",
+        "BCI Competition 2008 - Graz data set A"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "rwnonVHLHEpg"
+      },
+      "source": [
+        "### **Environment**"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "!numpy -V"
+      ],
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "lsD9jVSN1CmH",
+        "outputId": "a1cf5d69-9c54-4385-d1e1-d2071ac1b231"
+      },
+      "execution_count": null,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "/bin/bash: line 1: numpy: command not found\n"
+          ]
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "SRy3SJd9Ewvy",
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "outputId": "d5997aef-5bf9-4010-8056-a61dd5ac6ffd"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "Drive already mounted at /content/drive; to attempt to forcibly remount, call drive.mount(\"/content/drive\", force_remount=True).\n"
+          ]
+        }
+      ],
+      "source": [
+        "from google.colab import drive\n",
+        "drive.mount('/content/drive')"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "colab": {
+          "base_uri": "https://localhost:8080/"
+        },
+        "id": "gmKXtTtsH9uA",
+        "outputId": "c4600733-d9ee-458f-d485-84500725a688"
+      },
+      "outputs": [
+        {
+          "output_type": "stream",
+          "name": "stdout",
+          "text": [
+            "\u001b[?25l     \u001b[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m \u001b[32m0.0/119.2 kB\u001b[0m \u001b[31m?\u001b[0m eta \u001b[36m-:--:--\u001b[0m\r\u001b[2K     \u001b[91m━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m\u001b[90m╺\u001b[0m\u001b[90m━━━━━━━━━━━━\u001b[0m \u001b[32m81.9/119.2 kB\u001b[0m \u001b[31m2.6 MB/s\u001b[0m eta \u001b[36m0:00:01\u001b[0m\r\u001b[2K     \u001b[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m \u001b[32m119.2/119.2 kB\u001b[0m \u001b[31m2.7 MB/s\u001b[0m eta \u001b[36m0:00:00\u001b[0m\n",
+            "\u001b[?25h  Preparing metadata (setup.py) ... \u001b[?25l\u001b[?25hdone\n",
+            "\u001b[2K     \u001b[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m \u001b[32m100.3/100.3 kB\u001b[0m \u001b[31m10.1 MB/s\u001b[0m eta \u001b[36m0:00:00\u001b[0m\n",
+            "\u001b[?25h  Building wheel for pyriemann (setup.py) ... \u001b[?25l\u001b[?25hdone\n"
+          ]
+        }
+      ],
+      "source": [
+        "# download das dependências da biblioteca pyriemann\n",
+        "! pip install pyriemann scikit-optimize -q"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "IupwTogCIDuD"
+      },
+      "outputs": [],
+      "source": [
+        "# imports\n",
+        "import numpy as np\n",
+        "from matplotlib import pyplot as plt\n",
+        "import timeit\n",
+        "import math\n",
+        "import datetime as dt\n",
+        "\n",
+        "# imports sklearn\n",
+        "from sklearn.model_selection import cross_val_score, KFold, train_test_split\n",
+        "from sklearn.metrics import accuracy_score\n",
+        "\n",
+        "# imports pyriemann\n",
+        "from pyriemann.classification import MDM\n",
+        "\n",
+        "# lgbm\n",
+        "from lightgbm import LGBMClassifier\n",
+        "\n",
+        "# otimization\n",
+        "from skopt import gp_minimize"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "PoDcjpDq__e_"
+      },
+      "source": [
+        "### **Class and Functions**"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "tA2ZoW5MswMS"
+      },
+      "outputs": [],
+      "source": [
+        "def centroidWindows (low_freq, high_freq, scatter, overlap)->list:\n",
+        "  '''\n",
+        "    Função para determinar os centroides das janelas de frequência.\n",
+        "  '''\n",
+        "  centroid_windows = []\n",
+        "  overlap = overlap/100\n",
+        "  step = scatter-(scatter*overlap)\n",
+        "  array = np.arange(low_freq, high_freq, step)\n",
+        "  for i in array:\n",
+        "    centroid_windows.append(i)\n",
+        "  centroid_windows = centroid_windows[1:-1]\n",
+        "  return centroid_windows"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "C1Y18nrHCoGw"
+      },
+      "outputs": [],
+      "source": [
+        "def slidingWindow (Fs, scatter, centroid_windows, function_type, graphic=0, sample_size = 2)->list:\n",
+        "  '''\n",
+        "    Função para determinar as janelas de frequência.\n",
+        "  '''\n",
+        "  freq = np.fft.fftfreq(Fs*sample_size, d=1/Fs)\n",
+        "  sliding_window = []\n",
+        "  if function_type == 'rect':\n",
+        "      rect = lambda x,x0,L : 1*(np.abs((x-x0)/L) <= 1/2)\n",
+        "      for window in centroid_windows:\n",
+        "        sliding_window.append(rect(freq,window,scatter) + rect(freq,-window,scatter))\n",
+        "  elif function_type == 'gauss':\n",
+        "      gauss = lambda x,c,s : np.exp(-0.5*(x-c)**2/s**2)\n",
+        "      for window in centroid_windows:\n",
+        "        sliding_window.append(np.max(np.vstack((gauss(freq,window,scatter),gauss(freq,window,scatter))),axis=0))\n",
+        "  else:\n",
+        "    print(\"Erro: Parâmetros incorretos!!\")\n",
+        "\n",
+        "  if graphic == 1 and len(sliding_window)!=0:\n",
+        "        plt.figure(figsize=(20,2))\n",
+        "        for z in sliding_window:\n",
+        "          plt.plot(freq[0:120],z[0:120])\n",
+        "        plt.grid()\n",
+        "        plt.show()\n",
+        "  return sliding_window"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "_92kyFEtC1A4"
+      },
+      "outputs": [],
+      "source": [
+        "def covariancePonderada(one_trial, matrixH)->list:\n",
+        "  '''\n",
+        "    Função que realiza a estimação das matriz de covariância em função de um\n",
+        "    dado conjunto de dados já pré-processado.\n",
+        "    Args:\n",
+        "      one_trial:(ndarray) dados de EEG divididos em: número de ensaios (trials),\n",
+        "      número de canais (column) e número de amostras (layers).\n",
+        "      matrixH:(ndarray) matriz H ponderada através de uma função. A sua forma\n",
+        "      deve ter o dobro do número de amostras.\n",
+        "    Return:\n",
+        "      cov_data:(ndarray) matrizes de covariância.\n",
+        "  '''\n",
+        "  column, layers= one_trial.shape\n",
+        "  data_fft = np.fft.fft(one_trial)\n",
+        "  u = np.concatenate((data_fft.real,data_fft.imag),axis=1)\n",
+        "  data_cov = np.zeros(shape=(column,column))\n",
+        "  data_cov = u@matrixH@u.T\n",
+        "  return data_cov*(1/layers**2)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "vIoxtty_DV1l"
+      },
+      "outputs": [],
+      "source": [
+        "def estimatedCovariance(sliding_window, eeg_train, eeg_validacao, eeg_test):\n",
+        "  trial_train, channel, sample = eeg_train.shape\n",
+        "  trial_validacao = eeg_validacao.shape[0]\n",
+        "  trial_test = eeg_test.shape[0]\n",
+        "\n",
+        "  number_subbands = len(sliding_window)\n",
+        "\n",
+        "  cov_eeg_train = np.zeros((trial_train,number_subbands,channel,channel))\n",
+        "  cov_eeg_validacao = np.zeros((trial_validacao,number_subbands,channel,channel))\n",
+        "  cov_eeg_test = np.zeros((trial_test,number_subbands,channel,channel))\n",
+        "\n",
+        "  for n in range(trial_train):\n",
+        "    i = 0\n",
+        "    for z in sliding_window:\n",
+        "      h = np.concatenate((z,z),axis=0)\n",
+        "      H = np.diag(h)\n",
+        "      cov_eeg_train[n,i,:,:]=covariancePonderada(eeg_train[n,:,:], H)\n",
+        "      i += 1\n",
+        "\n",
+        "  for n in range(trial_validacao):\n",
+        "    k = 0\n",
+        "    for z in sliding_window:\n",
+        "      h = np.concatenate((z,z),axis=0)\n",
+        "      H = np.diag(h)\n",
+        "      cov_eeg_validacao[n,k,:,:]=covariancePonderada(eeg_validacao[n,:,:], H)\n",
+        "      k += 1\n",
+        "\n",
+        "  for n in range(trial_test):\n",
+        "    j = 0\n",
+        "    for z in sliding_window:\n",
+        "      h = np.concatenate((z,z),axis=0)\n",
+        "      H = np.diag(h)\n",
+        "      cov_eeg_test[n,j,:,:]=covariancePonderada(eeg_test[n,:,:], H)\n",
+        "      j += 1\n",
+        "\n",
+        "  cov_eeg_train = np.reshape(cov_eeg_train,(number_subbands,trial_train,channel,channel))\n",
+        "  cov_eeg_validacao = np.reshape(cov_eeg_validacao,(number_subbands,trial_validacao,channel,channel))\n",
+        "  cov_eeg_test = np.reshape(cov_eeg_test,(number_subbands,trial_test,channel,channel))\n",
+        "  return cov_eeg_train, cov_eeg_validacao, cov_eeg_test"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "ZRKg5RazGWiU"
+      },
+      "outputs": [],
+      "source": [
+        "def buildClassifiersMDM(cov_eeg_train, cov_eeg_validacao, cov_eeg_test, label_train, label_validacao, low_freq, high_freq, scatter, overlap):\n",
+        "  cv = KFold(n_splits=10, shuffle=True, random_state=42)\n",
+        "  number_classifiers = cov_eeg_train.shape[0]\n",
+        "\n",
+        "  trial_train = cov_eeg_train.shape[1]\n",
+        "  trial_validacao = cov_eeg_validacao.shape[1]\n",
+        "  trial_test = cov_eeg_test.shape[1]\n",
+        "\n",
+        "  feat_train = np.zeros((trial_train,2*number_classifiers))\n",
+        "  feat_validacao = np.zeros((trial_validacao,2*number_classifiers))\n",
+        "  feat_test = np.zeros((trial_test,2*number_classifiers))\n",
+        "\n",
+        "  mdm = [MDM(metric=dict(mean='riemann', distance='riemann')) for i in range(number_classifiers)]\n",
+        "  resultados_mdm = []\n",
+        "\n",
+        "  for i in range(number_classifiers):\n",
+        "    scores = cross_val_score(mdm[i], cov_eeg_train[i,:,:,:], label_train, cv=cv, n_jobs=-1)\n",
+        "    mdm[i].fit(cov_eeg_train[i,:,:,:],label_train)\n",
+        "    resultados_mdm.append((np.mean(scores),accuracy_score(label_validacao,mdm[i].predict(cov_eeg_validacao[i,:,:,:])),low_freq, high_freq, scatter, overlap))\n",
+        "    #resultados_mdm.append((accuracy_score(label_validacao,mdm[i].predict(cov_eeg_validacao[i,:,:,:])),low_freq, high_freq, scatter, overlap))\n",
+        "    if i == 0:\n",
+        "      feat_train[:,i:i+2] = mdm[i].transform(cov_eeg_train[i,:,:,:])\n",
+        "      feat_validacao[:,i:i+2] = mdm[i].transform(cov_eeg_validacao[i,:,:,:])\n",
+        "      feat_test[:,i:i+2] = mdm[i].transform(cov_eeg_test[i,:,:,:])\n",
+        "    else:\n",
+        "      feat_train[:,i+i:i+2+i] = mdm[i].transform(cov_eeg_train[i,:,:,:])\n",
+        "      feat_validacao[:,i+i:i+2+i] = mdm[i].transform(cov_eeg_validacao[i,:,:,:])\n",
+        "      feat_test[:,i+i:i+2+i] = mdm[i].transform(cov_eeg_test[i,:,:,:])\n",
+        "\n",
+        "  return feat_train, feat_validacao, feat_test, resultados_mdm"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "FayC_fAyK1GS"
+      },
+      "outputs": [],
+      "source": [
+        "def buildFeat(feat):\n",
+        "  trial, subbands = feat.shape\n",
+        "  featOut = np.zeros((trial,int(subbands/2)))\n",
+        "  k = 0\n",
+        "  for i in range(0, subbands, 2):\n",
+        "    featOut[:,k] = (feat[:,i+1]-feat[:,i])/(feat[:,i+1]+feat[:,i])\n",
+        "    k += 1\n",
+        "  return featOut"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "WZbUcY3dAAp-"
+      },
+      "outputs": [],
+      "source": [
+        "def newClassifyMethod(low_freq, high_freq, scatter, overlap, eeg_train, eeg_validacao, eeg_test, eeg_label_train, eeg_label_validacao):\n",
+        "  centroid_windows = centroidWindows(low_freq, high_freq, scatter, overlap)\n",
+        "  sliding_window = slidingWindow(Fs, scatter, centroid_windows, function_type='gauss')\n",
+        "  cov_eeg_train, cov_eeg_validacao, cov_eeg_test = estimatedCovariance(sliding_window, eeg_train, eeg_validacao, eeg_test)\n",
+        "  feat_train, feat_validacao, feat_test, resultados_mdm = buildClassifiersMDM(cov_eeg_train, cov_eeg_validacao, cov_eeg_test, eeg_label_train, eeg_label_validacao, low_freq, high_freq, scatter, overlap)\n",
+        "  feat_train, feat_validacao, feat_test  = buildFeat(feat_train), buildFeat(feat_validacao), buildFeat(feat_test)\n",
+        "\n",
+        "  cv = KFold(n_splits=10, random_state=42, shuffle=True)\n",
+        "  cf = LGBMClassifier(random_state = 42, verbosity=-1)\n",
+        "  scores = cross_val_score(cf, feat_train, eeg_label_train, scoring='accuracy', cv=cv, n_jobs=-1)\n",
+        "  cf.fit(feat_train, eeg_label_train)\n",
+        "  predict_model = cf.predict(feat_validacao)\n",
+        "  accuracy_train = np.mean(scores)\n",
+        "  accuracy_validacao = accuracy_score(eeg_label_validacao, predict_model)\n",
+        "\n",
+        "  return accuracy_train, accuracy_validacao, resultados_mdm, predict_model, low_freq, high_freq, scatter, overlap, feat_test, cf"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "Qs7CcTaFRDPz"
+      },
+      "outputs": [],
+      "source": [
+        "resultados = []\n",
+        "data_mdm = []\n",
+        "def treinar_modelo(params):\n",
+        "  low_freq = params[0]\n",
+        "  high_freq = params[1]\n",
+        "  scatter = params[2]\n",
+        "  overlap = params[3]\n",
+        "  print(\"\\n\",params)\n",
+        "  accuracy_train, accuracy_validacao, resultados_mdm, predict_model, low_freq, high_freq, scatter, overlap, feat_test, cf = newClassifyMethod(low_freq, high_freq, scatter, overlap, eeg_train, eeg_validacao, eeg_test, eeg_label_train, eeg_label_validacao)\n",
+        "  data_mdm.append(resultados_mdm)\n",
+        "  resultados.append((accuracy_train, accuracy_validacao, low_freq, high_freq, scatter, overlap))\n",
+        "  return -accuracy_score(eeg_label_validacao, predict_model)\n",
+        "\n",
+        "space = [(4,16),\n",
+        "         (30,40),\n",
+        "         (4,10),\n",
+        "         (40,60)]"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "By1v6SGqAhis"
+      },
+      "outputs": [],
+      "source": [
+        "def convert(seconds):\n",
+        "    seconds = seconds % (24 * 3600)\n",
+        "    hour = seconds // 3600\n",
+        "    seconds %= 3600\n",
+        "    minutes = seconds // 60\n",
+        "    seconds %= 60\n",
+        "    tempo_execucao = \"%d:%02d:%02d\" % (hour, minutes, seconds)\n",
+        "    return tempo_execucao"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def best_scenario_mdm(data_mdm):\n",
+        "  result_mdm = []\n",
+        "  for data in data_mdm:\n",
+        "    for i in data:\n",
+        "      result_mdm.append(i)\n",
+        "  result_mdm.sort(key=lambda x: x[0], reverse=True)\n",
+        "  best_train = 0\n",
+        "  best_test = 0\n",
+        "  best_low_freq = 0\n",
+        "  best_high_freq = 0\n",
+        "  best_scatter = 0\n",
+        "  best_overlap = 0\n",
+        "  for i in result_mdm:\n",
+        "    train, test, low_freq, high_freq, scatter, overlap = i[0], i[1], i[2], i[3], i[4], i[5]\n",
+        "    if train >= best_train and test >= best_test:\n",
+        "        best_train, best_test,best_low_freq, best_high_freq, best_scatter, best_overlap = train, test, low_freq, high_freq, scatter, overlap\n",
+        "\n",
+        "  return result_mdm, best_train, best_test, best_low_freq, best_high_freq, best_scatter, best_overlap"
+      ],
+      "metadata": {
+        "id": "3XnpYg5jUc1P"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "w_sAFzli7Uyh"
+      },
+      "outputs": [],
+      "source": [
+        "def select_best_scenario(data_mdm, resultados_lgbm, best_low_freq, best_high_freq, best_scatter, best_overlap, duracao):\n",
+        "  result_mdm, best_train_mdm, best_validacao_mdm, best_low_freq_mdm, best_high_freq_mdm, best_scatter_mdm, best_overlap_mdm = best_scenario_mdm(data_mdm)\n",
+        "\n",
+        "  with open(path+'Sujeito '+str(suj)+' Resultados.txt','a') as arquivo:\n",
+        "    arquivo.write('Melhores Resultados - Sujeito '+str(suj)+'\\n')\n",
+        "    arquivo.write('--------------Resultados - MDM-------------\\n')\n",
+        "    arquivo.write(f'Accuracy Train: {best_train_mdm*100:.2f}\\n')\n",
+        "    arquivo.write(f'Accuracy Evaluation: {best_validacao_mdm*100:.2f}\\n')\n",
+        "    arquivo.write(f'Low Frequency: {best_low_freq_mdm}\\n')\n",
+        "    arquivo.write(f'High Frequency: {best_high_freq_mdm}\\n')\n",
+        "    arquivo.write(f'Sccater: {best_scatter_mdm}\\n')\n",
+        "    arquivo.write(f'Overlap: {best_overlap_mdm}\\n')\n",
+        "    arquivo.write('\\n------------Resultados - LGBM------------\\n')\n",
+        "    arquivo.write(f'Accuracy Evaluation: {accuracy_train*100:.2f}\\n')\n",
+        "    arquivo.write(f'Accuracy Evaluation: {accuracy_validacao*100:.2f}\\n')\n",
+        "    arquivo.write(f'Accuracy Test: {accuracy_test*100:.2f}\\n')\n",
+        "    arquivo.write(f'Low Frequency: {best_low_freq}\\n')\n",
+        "    arquivo.write(f'High Frequency: {best_high_freq}\\n')\n",
+        "    arquivo.write(f'Sccater: {best_scatter}\\n')\n",
+        "    arquivo.write(f'Overlap: {best_overlap}\\n')\n",
+        "    arquivo.write('-------------------------------------------\\n')\n",
+        "    arquivo.write(f'Data do Experimento: {dt.date.today()}\\n')\n",
+        "    arquivo.write(f'Duração: {convert(duracao)}\\n')\n",
+        "    arquivo.write('\\n\\n------------Resultados Gerais - MDM-------------\\n')\n",
+        "    for i in result_mdm:\n",
+        "      arquivo.write(str(i)+'\\n')\n",
+        "    arquivo.write('\\n\\n------------Resultados Gerais - LGBM------------\\n')\n",
+        "    for j in resultados_lgbm:\n",
+        "      arquivo.write(str(j)+'\\n')\n",
+        "    arquivo.close()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "wXXVPUfhqJTY"
+      },
+      "source": [
+        "### **Setup**"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "enTj2vlFqC13"
+      },
+      "outputs": [],
+      "source": [
+        "# definindo o sujeito\n",
+        "suj = 9\n",
+        "\n",
+        "# frequência de amostragem\n",
+        "Fs = 250\n",
+        "\n",
+        "# carregando dados de treinamento\n",
+        "eeg_train = np.load('/content/drive/MyDrive/Colab Notebooks/learn_BCI - TCC Danilo/Dataset_Processed/Treino/A0'+str(suj)+'T.npy')\n",
+        "\n",
+        "# carregando dados de avaliação\n",
+        "eeg_test = np.load('/content/drive/MyDrive/Colab Notebooks/learn_BCI - TCC Danilo/Dataset_Processed/Teste/A0'+str(suj)+'E.npy')\n",
+        "\n",
+        "# diretorio para salvar os resultados\n",
+        "path = '/content/drive/MyDrive/Colab Notebooks/learn_BCI - TCC Danilo/TCC/Resultados_Final/'\n",
+        "\n",
+        "# definindo o array de labels\n",
+        "eeg_label_test = np.concatenate((np.zeros(72),np.ones(72)))\n",
+        "eeg_train, eeg_validacao, eeg_label_train, eeg_label_validacao = train_test_split(eeg_train, eeg_label_test, test_size=0.33, random_state=42, shuffle=True)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "ZEnRPMDmSlAk"
+      },
+      "source": [
+        "## **Bayesian Optimization e Classificação - LGBM**"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "zTeh2R50Sj_Q"
+      },
+      "outputs": [],
+      "source": [
+        "tempo_inicial = timeit.default_timer()\n",
+        "resultados_gp = gp_minimize(treinar_modelo, space, random_state=42, verbose=1, n_calls=350, n_random_starts=5)\n",
+        "best_low_freq, best_high_freq, best_scatter, best_overlap = resultados_gp.x[0], resultados_gp.x[1], resultados_gp.x[2], resultados_gp.x[3]\n",
+        "# construindo o classificador com os parâmetros otimizados\n",
+        "accuracy_train, accuracy_validacao, resultados_mdm, predict_model, low_freq, high_freq, scatter, overlap, feat_test, cf = newClassifyMethod(best_low_freq, best_high_freq, best_scatter, best_overlap, eeg_train, eeg_validacao, eeg_test, eeg_label_train, eeg_label_validacao)\n",
+        "predict_test = cf.predict(feat_test)\n",
+        "accuracy_test = accuracy_score(eeg_label_test, predict_test)\n",
+        "tempo_final = timeit.default_timer()\n",
+        "duracao = tempo_final - tempo_inicial\n",
+        "# salvando os resultados\n",
+        "select_best_scenario(data_mdm, resultados, best_low_freq, best_high_freq, best_scatter, best_overlap, duracao)"
+      ]
+    }
+  ],
+  "metadata": {
+    "colab": {
+      "provenance": [],
+      "authorship_tag": "ABX9TyNAvWHY2R80s6k+xu/yknWR",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
