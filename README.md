@@ -1,2 +1,2 @@
-# classify_eeg
+# Classificação da Imagética Motora através da filtragem de sub-bandas por janelamento do espectro do sinal de EEG e implementação da Otimização Bayesiana em sistemas BCI baseados na geometria de Riemann
 Implementação de uma técnica de ponderamento das informações de frequências contidas no espectro do sinal de EEG por meio de janelamento de sub-bandas, com comprimento, quantidade e sobreposição variáveis.
