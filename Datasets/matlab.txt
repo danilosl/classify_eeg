@@ -1,0 +1,6 @@
+[s, h] = sload('A01T.gdf', 0, 'OVERFLOWDETECTION:OFF');
+tipo_evento = h.EVENT.TYP
+clc
+posicao = h.EVENT.POS
+
+save('bci_A01T.mat','s','tipo_evento','posicao')
